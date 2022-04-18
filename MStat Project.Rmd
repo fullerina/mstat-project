@@ -1,0 +1,484 @@
+---
+title: "MStat Project"
+author: "Annie Fuller"
+date: "3/10/2022"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library('spatstat')
+require('RCurl')
+```
+
+$\hat{\Sigma}_{GR} = |B(1)|\frac{r^{q+2}}{q+2}I_q - \frac{1}{|B(R-r)|}\sum_{i\in N_0}\sum_{j \in N_i}(X_i - X_j)(X_i-X_j)'$
+
+Below is the original R code sourced from in Gaussian determinantal processes: A new model for directionality in data by Subhroshekhar Ghosh and Philippe Rigollet
+
+Downloaded on March 15, 2022 at https://klein.mit.edu/~rigollet/Code/DPP/DPPcode.R
+
+```{r, Sigma_GR function}
+norm_vec <- function(x){
+  sqrt(sum(x^2))
+}
+
+sigmat <- function(X, r, att=1,R){
+  #Inputs are X: dataframe where each row is a point in d dimensions.
+  #r>0 is the scale at which the problem is looked at default is sqrt(d), and R is the radius of the window in which the points are.
+  # if no r, it is attenuated by the factor att
+  n<-dim(X)[1]
+  d<-dim(X)[2]
+  if(missing(r)){r <- sqrt(d)}
+  r <- r*att
+  print(r)
+  sigma=matrix(0, nrow=d,ncol=d)
+  vol <- abs(((pi^(d/2))/(gamma(d/2 + 1)))*(R-r)^d)
+  print(vol)
+
+  vec_dimn <- integer(n)
+    
+for (i in 1:n){
+  dist <- sqrt(rowSums(mapply(function(x,y) (x-y)^2, X, X[i,])))
+  index_neighbors <- (dist<r)&(dist>0)
+  neighbors <- as.matrix(X[index_neighbors,])
+  nn <- dim(neighbors)[1]
+  vec_dimn[i] <- nn
+  ones <- cbind(rep(1,nn));
+  xi <- rbind(as.numeric(X[i,]))
+  neighbors <- neighbors - ones%*%xi
+  sigma=1/vol*(sigma+t(neighbors)%*%neighbors) #divided by n added to appropriately scale eigenvalues
+  
+}
+  s <- svd(sigma)
+  ss <- s$v
+  S <- ss[,1:2] #project onto the space spanned by first two eigenvectors of estimator
+  Y=list("pro"=as.matrix(X)%*%S, "s"=s,"sigma"=as.matrix(sigma), "dimn"=vec_dimn,"max_dist"=max(dist))
+  
+  return(Y)
+}
+
+sigmat_no_sc <- function(X, r, att=1){
+  #Inputs are X: dataframe where each row is a point in d dimensions.
+  #r>0 is the scale at which the problem is looked at default is sqrt(d), and R is the radius of the window in which the points are.
+  # if no r, it is attenuated by the factor att
+  n<-dim(X)[1]
+  d<-dim(X)[2]
+  if(missing(r)){r <- sqrt(d)}
+  r <- r*att
+  sigma=matrix(0, nrow=d,ncol=d)
+
+  vec_dimn <- integer(n)
+    
+for (i in 1:n){
+  dist <- sqrt(rowSums(mapply(function(x,y) (x-y)^2, X, X[i,])))
+  index_neighbors <- (dist<r)&(dist>0)
+  neighbors <- as.matrix(X[index_neighbors,])
+  nn <- dim(neighbors)[1]
+  vec_dimn[i] <- nn
+  ones <- cbind(rep(1,nn));
+  xi <- rbind(as.numeric(X[i,]))
+  neighbors <- neighbors - ones%*%xi
+  sigma=(sigma+t(neighbors)%*%neighbors) #divided by n added to appropriately scale eigenvalues
+  
+}
+  s <- svd(sigma)
+  ss <- s$v
+  S <- ss[,1:2] #project onto the space spanned by first two eigenvectors of estimator
+  Y=list("pro"=as.matrix(X)%*%S, "s"=s,"sigma"=as.matrix(sigma), "dimn"=vec_dimn,"max_dist"=max(dist))
+  
+  return(Y)
+}
+
+```
+
+```{r,import data}
+#import data
+```{r, import data}
+library('tidyr')
+
+#iris data
+iris_clus <- read.csv("iris.data",header=F)
+iris <- as.data.frame(iris[,c(1:4)])
+iris_scaled <- as.data.frame(scale(iris,scale=TRUE,center=TRUE))
+
+#WDBC data
+#https://archive.ics.uci.edu/ml/machine-learning-databases/breast-cancer-wisconsin/wdbc.data
+
+wdbc <- read.csv("wdbc.data", sep=",", header = F)
+
+wdbc[wdbc == "?"] <- NA
+#which(is.na(wdbc))
+wdbc_clus <- as.data.frame(wdbc)
+wdbc <- as.data.frame(wdbc[,c(3:32)])
+# wdbc <- as.data.frame(scale(wdbc,scale=FALSE,center=FALSE)) #unscaled data
+wdbc_scaled <- as.data.frame(scale(wdbc,scale=TRUE,center=TRUE)) #scale data
+
+#ecoli
+ecoli <- read.csv("ecoli.data",sep="",header=F)
+ecoli <- subset(ecoli, V9 != "omL" & V9 != "imL" & V9 != "imS") 
+#removing categories with only a few observations
+ecoli <- ecoli[,c(1:3,6:9)]
+#removing V4 and V5 as they only have one or two observation options
+ecoli_clus <- ecoli
+ecoli <- ecoli[,c(2:6)]
+ecoli_scaled <- as.data.frame(scale(ecoli,scale=TRUE,center=TRUE))
+```
+
+```{r,r experiments}
+r_experiment <- .75
+
+#wdbc: pca vs. Sigma_GR eigenvector projections
+pca_wdbc_scaled <- prcomp(wdbc_scaled, scale=TRUE, center=TRUE)
+plot((pca_wdbc_scaled$sdev)^2,main="Standard PCA",ylab="Eigenvalues",xlab="Index")
+# screeplot(pca_wdbc,npcs=length(pca_wdbc$sdev), type="lines")
+
+#recreating article
+wdbc_GR_article <- sigmat_no_sc(wdbc_scaled,r=24.76723,)
+plot(wdbc_GR_article$s$d,main="DPP Method, r=10",ylab="Eigenvalues",xlab="Index")
+
+#using r=.75
+wdbc_GR_75 <- sigmat_no_sc(wdbc_scaled,r=r_experiment)
+plot(wdbc_GR_75$s$d,main="DPP Method, r=0.75",ylab="Eigenvalues",xlab="Index")
+
+#default r (sqrt of q)
+wdbc_GR_default <- sigmat_no_sc(wdbc_scaled)
+plot(wdbc_GR_default$s$d,main="DPP Method, default r",ylab="Eigenvalues",xlab="Index")
+```
+
+```{r, determine R}
+#determine R
+determine_R_2 <- function(X) {
+  cent <- mapply(mean, X)
+  dist1 <- sqrt(rowSums(mapply(function(x,y) (x-y)^2, X, cent)))
+  return(max(dist1))
+}
+
+iris_R <- determine_R_2(iris_scaled)
+wdbc_R <- determine_R_2(wdbc_scaled)
+ecoli_R <- determine_R_2(ecoli_scaled)
+```
+
+```{r, PCA vs. DPP & screeplots}
+#iris: pca vs. Sigma_GR eigenvalues
+pca_iris <- prcomp(iris_scaled, scale=TRUE, center=TRUE)
+jpeg("pca_iris.jpg")
+plot((pca_iris$sdev)^2,main="Iris: Standard PCA",ylab="Eigenvalues",xlab="Index",type="b")
+dev.off()
+
+#DPP method
+iris_GR <- sigmat(iris_scaled,R=iris_R)
+jpeg("DPP_iris.jpg")
+plot(iris_GR$s$d,main="Iris: DPP Method, default r",ylab="Eigenvalues",xlab="Index",type="b")
+dev.off()
+
+#--
+  
+#wdbc: pca vs. Sigma_GR eigenvector projections
+pca_wdbc <- prcomp(wdbc_scaled, scale=TRUE, center=TRUE)
+jpeg("pca_wdbc.jpg")
+plot((pca_wdbc$sdev)^2,main="WDBC: Standard PCA",ylab="Eigenvalues",xlab="Index",type="b")
+dev.off()
+
+#DPP method
+wdbc_GR <- sigmat(wdbc_scaled,R=wdbc_R)
+jpeg("DPP_wdbc.jpg")
+plot(wdbc_GR$s$d,main="WDBC: DPP Method, default r",ylab="Eigenvalues",xlab="Index",type="b")
+dev.off()
+
+#--
+
+#ecoli: pca vs. Sigma_GR eigenvector projections
+jpeg("pca_ecoli.jpg")
+pca_ecoli <- prcomp(ecoli_scaled,scale=TRUE,center=TRUE)
+plot((pca_ecoli$sdev)^2,main="E.Coli: Standard PCA",ylab="Eigenvalues",xlab="Index",type="b")
+dev.off()
+
+#DPP method
+ecoli_GR <- sigmat(ecoli_scaled,R=ecoli_R)
+jpeg("DPP_ecoli.jpg")
+plot(ecoli_GR$s$d,main="E.Coli: DPP Method, default r",ylab="Eigenvalues",xlab="Index",type="b")
+dev.off()
+
+```
+
+```{r, projections}
+library("factoextra")
+
+#projection of first two principal components 
+#vs. first two eigenvectors of Sigma_GR
+
+#iris
+jpeg("iris_pca_proj.jpg")
+fviz_pca_ind(pca_iris, label="none", habillage=iris_clus$V5,title="Iris: Projection of first two PCs (standard PCA)",xlab="PCA-PC1",ylab="PCA-PC2")
+#dev.off()
+
+# iris_projection <- as.data.frame(iris_GR$pro)
+
+b <- 250*(pi/180)
+iris_rotation <- t(matrix(c(cos(b),-sin(b),sin(b),cos(b)),nrow=2))
+
+iris_projection <- as.matrix(iris_GR$pro)
+iris_projection <- t(iris_rotation%*%t(iris_projection))
+iris_projection <- as.data.frame(iris_projection)
+
+jpeg("iris_dpp_proj.jpg")
+ggplot(iris_projection,aes(x=iris_projection[,1],y=iris_projection[,2],group=iris_clus$V5))+
+  geom_point(aes(shape=iris_clus$V5,color=iris_clus$V5))+
+  geom_vline(xintercept=0, linetype="longdash")+
+  geom_hline(yintercept=0,linetype="longdash")+
+  ggtitle("Iris: Projection of first two eigenvectors (DPP)") + 
+  xlab("DPP-PC1") + ylab("DPP-PC2") + labs(color="Groups",shape="Groups") + 
+  theme_bw() + theme(panel.border = element_blank())
+dev.off()
+
+#wdbc
+jpeg("wdbc_pca_proj.jpg")
+fviz_pca_ind(pca_wdbc, label="none", habillage=wdbc_clus$V2,title="WDBC: Projection of first two PCs (standard PCA)",xlab="PCA-PC1",ylab="PCA-PC2")
+dev.off()
+
+# wdbc_projection <- as.data.frame(wdbc_GR$pro)
+
+a <- 45*(pi/180)
+wdbc_rotation <- t(matrix(c(cos(a),-sin(a),sin(a),cos(a)),nrow=2))
+
+wdbc_projection <- as.matrix(wdbc_GR$pro)
+wdbc_projection <- t(wdbc_rotation%*%t(wdbc_projection))
+wdbc_projection <- as.data.frame(wdbc_projection)
+
+jpeg("wdbc_dpp_proj.jpg")
+ggplot(wdbc_projection,aes(x=wdbc_projection[,1],y=wdbc_projection[,2],group=wdbc_clus$V2))+
+  geom_point(aes(shape=wdbc_clus$V2,color=wdbc_clus$V2))+
+  geom_vline(xintercept=0, linetype="longdash")+
+  geom_hline(yintercept=0,linetype="longdash")+
+  ggtitle("WDBC: Projection of first two eigenvectors (DPP)") + 
+  xlab("DPP-PC1") + ylab("DPP-PC2") + labs(color="Groups",shape="Groups") + 
+  theme_bw() + theme(panel.border = element_blank())
+dev.off()
+
+#ecoli
+jpeg("ecoli_pca_proj.jpg")
+fviz_pca_ind(pca_ecoli, label="none", habillage=ecoli_clus$V9,title="E.Coli: Projection of first two PCs (standard PCA)",xlab="PCA-PC1",ylab="PCA-PC2")
+dev.off()
+
+#ecoli_projection <- as.data.frame(ecoli_GR$pro)
+
+c <- 1*(pi/180)
+ecoli_rotation <- t(matrix(c(cos(c),-sin(c),sin(c),cos(c)),nrow=2))
+
+ecoli_projection <- as.matrix(ecoli_GR$pro)
+ecoli_projection  <- t(ecoli_rotation%*%t(ecoli_projection))
+ecoli_projection <- as.data.frame(ecoli_projection)
+
+jpeg("ecoli_dpp_proj.jpg")
+ggplot(ecoli_projection,aes(x=-ecoli_projection[,1],y=ecoli_projection[,2],group=ecoli_clus$V9))+
+  geom_point(aes(shape=ecoli_clus$V9,color=ecoli_clus$V9))+
+  geom_vline(xintercept=0, linetype="longdash")+
+  geom_hline(yintercept=0,linetype="longdash")+
+  ggtitle("E.Coli: Projection of first two eigenvectors (DPP)") + 
+  xlab("DPP-PC1") + ylab("DPP-PC2") + labs(color="Groups",shape="Groups") + 
+  theme_bw() + theme(panel.border = element_blank())
+dev.off()
+```
+
+```{r, projection test}
+dpp_wdbc_test <- sigmat_no_sc(wdbc)
+
+d <- 95*(pi/180)
+test_rotation <- t(matrix(c(cos(d),-sin(d),sin(d),cos(d)),nrow=2))
+
+test_projection <- as.matrix(dpp_wdbc_test$pro)
+test_projection <- t(test_rotation%*%t(test_projection))
+test_projection <- as.data.frame(test_projection)
+
+jpeg("test_projection_wdbc.jpg")
+ggplot(test_projection,aes(x=-test_projection[,1],y=test_projection[,2],group=wdbc_clus$V2))+
+  geom_point(aes(shape=wdbc_clus$V2,color=wdbc_clus$V2))+
+  geom_vline(xintercept=0, linetype="longdash")+
+  geom_hline(yintercept=0,linetype="longdash")+
+  ggtitle("Unscaled WDBC: Projection of first two eigenvectors (DPP)") + 
+  xlab("DPP-PC1") + ylab("DPP-PC2") + labs(color="Groups",shape="Groups") + 
+  theme_bw() + theme(panel.border = element_blank())
+dev.off()
+
+dpp_iris_test <- sigmat_no_sc(iris)
+
+e <- 130*(pi/180)
+test_rotation_iris <- t(matrix(c(cos(e),-sin(e),sin(e),cos(e)),nrow=2))
+
+test_projection_iris<- as.matrix(dpp_iris_test$pro)
+test_projection_iris <- t(test_rotation_iris%*%t(test_projection_iris))
+test_projection_iris <- as.data.frame(test_projection_iris)
+
+jpeg("test_projection_iris.jpg")
+ggplot(test_projection_iris,aes(x=test_projection_iris[,1],y=test_projection_iris[,2],group=iris_clus$V5))+
+  geom_point(aes(shape=iris_clus$V5,color=iris_clus$V5))+
+  geom_vline(xintercept=0, linetype="longdash")+
+  geom_hline(yintercept=0,linetype="longdash")+
+  ggtitle("Unscaled Iris: Projection of first two eigenvectors (DPP)") + 
+  xlab("DPP-PC1") + ylab("DPP-PC2") + labs(color="Groups",shape="Groups") + 
+  theme_bw() + theme(panel.border = element_blank())
+dev.off()
+
+dpp_ecoli_test <- sigmat_no_sc(ecoli)
+
+test_projection_ecoli <- as.data.frame(dpp_ecoli_test$pro)
+
+jpeg("test_projection_ecoli.jpg")
+ggplot(test_projection_ecoli ,aes(x=test_projection_ecoli [,1],y=test_projection_ecoli [,2],group=ecoli_clus$V9))+
+  geom_point(aes(shape=ecoli_clus$V9,color=ecoli_clus$V9))+
+  geom_vline(xintercept=0, linetype="longdash")+
+  geom_hline(yintercept=0,linetype="longdash")+
+  ggtitle("Unscaled E.Coli: Projection of first two eigenvectors (DPP)") + 
+  xlab("DPP-PC1") + ylab("DPP-PC2") + labs(color="Groups",shape="Groups") + 
+  theme_bw() + theme(panel.border = element_blank())
+dev.off()
+
+```
+
+```{r, labels}
+library('dplyr')
+wdbc_label <- wdbc_clus$V2
+wdbc_label[wdbc_label == "M"] <- 1
+wdbc_label[wdbc_label == "B"] <- 0
+wdbc_label <- as.double(wdbc_label)
+
+iris_label <- data.frame(iris_clus$V5)
+
+iris_label <- iris_label %>%
+  mutate(iris_clus.V5 = replace(iris_clus.V5,iris_clus.V5 == "Iris-setosa",0)) %>%
+  mutate(iris_clus.V5 = replace(iris_clus.V5,iris_clus.V5 == "Iris-versicolor",1)) %>%
+  mutate(iris_clus.V5 = replace(iris_clus.V5,iris_clus.V5 == "Iris-virginica", 2))
+
+ecoli_label <- data.frame(ecoli_clus$V9)
+
+# ecoli_label <- ecoli_label %>%
+#   mutate(ecoli_clus.V9 = replace(ecoli_clus.V9,ecoli_clus.V9 == "cp",0)) %>%
+#   mutate(ecoli_clus.V9 = replace(ecoli_clus.V9,ecoli_clus.V9 == "im",1)) %>%
+#   mutate(ecoli_clus.V9 = replace(ecoli_clus.V9,ecoli_clus.V9 == "imU",2)) %>%
+#   mutate(ecoli_clus.V9 = replace(ecoli_clus.V9,ecoli_clus.V9 == "om",3)) %>%
+#   mutate(ecoli_clus.V9 = replace(ecoli_clus.V9,ecoli_clus.V9 == "pp",4))
+
+
+ecoli_label_test <- ecoli_label %>%
+  mutate(ecoli_clus.V9 = replace(ecoli_clus.V9,ecoli_clus.V9 == "cp",0)) %>%
+  mutate(ecoli_clus.V9 = replace(ecoli_clus.V9,ecoli_clus.V9 == "im",1)) %>%
+  mutate(ecoli_clus.V9 = replace(ecoli_clus.V9,ecoli_clus.V9 == "imU",1)) %>%
+  mutate(ecoli_clus.V9 = replace(ecoli_clus.V9,ecoli_clus.V9 == "om",1)) %>%
+  mutate(ecoli_clus.V9 = replace(ecoli_clus.V9,ecoli_clus.V9 == "pp",1))
+
+```
+
+```{r, ROC curve WDBC}
+library('pROC')
+#WDBC
+#calculate predicted values (Y) with standard PCA, data %*% first PCA eigenvector
+Y_wdbc_pca <- as.matrix(wdbc_scaled)%*%as.matrix(pca_wdbc$rotation[,1]) 
+wdbc_roc_pca <- roc(wdbc_label,Y_wdbc_pca)
+
+#calculate predicted values with GR-estimated PCA, data %*% first DPP eigenvector
+Y_wdbc_dpp <- as.matrix(wdbc_scaled)%*%as.matrix(wdbc_GR$s$v[,1])
+wdbc_roc_dpp <- roc(wdbc_label,Y_wdbc_dpp)
+
+jpeg("wdbc_roc.jpg")
+plot(x=1-wdbc_roc_pca$specificities,y=wdbc_roc_pca$sensitivities,ylab="True Positives", xlab="False Positives", type="l",col="orange",main="WDBC: ROC Curves")
+lines(x=1-wdbc_roc_dpp$specificities,y=wdbc_roc_dpp$sensitivities,type="l",col="blue")
+legend(x="bottomright",legend=c("PCA", "DPP"),col=c("orange", "blue"),lty=1:2, cex=0.8)
+dev.off()
+
+#calculate AUC
+auc_wdbc_pca <- auc(wdbc_label,Y_wdbc_pca)
+auc_wdbc_dpp <- auc(wdbc_label,Y_wdbc_dpp)
+
+sprintf("Scaled AUC PCA Method %.4f | Scaled AUC DPP Method %.4f",auc_wdbc_pca,auc_wdbc_dpp)
+```
+
+```{r,confusion matrices IRIS}
+library(caret)
+library(nnet)
+
+#IRIS
+#pca
+Y_iris_pca <- as.data.frame(as.matrix(iris_scaled)%*%as.matrix(pca_iris$rotation))
+Y_iris_pca <- data.frame(Y_iris_pca,iris_clus[5])
+
+model_iris_pca <- multinom(V5~PC1+PC2, data = Y_iris_pca)
+
+p_iris_pca <- predict(model_iris_pca, Y_iris_pca)
+tab_iris_pca <- table(p_iris_pca, Y_iris_pca$V5)
+tab_iris_pca
+
+iris_pca_mis_error <- 1 - sum(diag(tab_iris_pca)) / sum(tab_iris_pca) # misslassication error / percent
+iris_pca_mis_error
+
+#dpp
+Y_iris_dpp <- as.matrix(iris_scaled)%*%as.matrix(iris_GR$s$v)
+Y_iris_dpp <- data.frame(Y_iris_dpp,iris_clus[5])
+
+model_iris_dpp <- multinom(V5~X1+X2, data = Y_iris_dpp)
+
+p_iris_dpp <- predict(model_iris_dpp, Y_iris_dpp)
+tab_iris_dpp <- table(p_iris_dpp, Y_iris_dpp$V5)
+tab_iris_dpp
+
+iris_dpp_mis_error <- 1 - sum(diag(tab_iris_dpp)) / sum(tab_iris_dpp) # misslassication error / percent
+iris_dpp_mis_error
+```
+
+```{r, confusion matrices, WDBC}
+#WDBC
+#pca
+Y_wdbc_pca <- as.data.frame(as.matrix(wdbc_scaled)%*%as.matrix(pca_wdbc$rotation))
+Y_wdbc_pca <- data.frame(Y_wdbc_pca,wdbc_clus[2])
+
+model_wdbc_pca <- multinom(V2~PC1+PC2, data = Y_wdbc_pca)
+
+p_wdbc_pca <- predict(model_wdbc_pca, Y_wdbc_pca)
+tab_wdbc_pca <- table(p_wdbc_pca, Y_wdbc_pca$V2)
+tab_wdbc_pca
+
+wdbc_pca_mis_error <- 1 - sum(diag(tab_wdbc_pca)) / sum(tab_wdbc_pca) # misslassication error / percent
+wdbc_pca_mis_error
+
+#dpp
+Y_wdbc_dpp <- as.matrix(wdbc_scaled)%*%as.matrix(wdbc_GR$s$v)
+Y_wdbc_dpp <- data.frame(Y_wdbc_dpp,wdbc_clus[2])
+
+model_wdbc_dpp <- multinom(V2~X1+X2, data = Y_wdbc_dpp)
+
+p_wdbc_dpp <- predict(model_wdbc_dpp, Y_wdbc_dpp)
+tab_wdbc_dpp <- table(p_wdbc_dpp, Y_wdbc_dpp$V2)
+tab_wdbc_dpp
+
+wdbc_dpp_mis_error <- 1 - sum(diag(tab_wdbc_dpp)) / sum(tab_wdbc_dpp) # misslassication error / percent
+wdbc_dpp_mis_error
+```
+
+```{r, confusion matrices, ecoli}
+#ECOLI
+#pca
+Y_ecoli_pca <- as.data.frame(as.matrix(ecoli_scaled)%*%as.matrix(pca_ecoli$rotation))
+Y_ecoli_pca <- data.frame(Y_ecoli_pca,ecoli_clus[7])
+
+model_ecoli_pca <- multinom(V9~PC1+PC2, data = Y_ecoli_pca)
+
+p_ecoli_pca <- predict(model_ecoli_pca, Y_ecoli_pca)
+tab_ecoli_pca <- table(p_ecoli_pca, Y_ecoli_pca$V9)
+tab_ecoli_pca
+
+ecoli_pca_mis_error <- 1 - sum(diag(tab_ecoli_pca)) / sum(tab_ecoli_pca) # misslassication error / percent
+ecoli_pca_mis_error
+
+#dpp
+Y_ecoli_dpp <- as.matrix(ecoli_scaled)%*%as.matrix(ecoli_GR$s$v)
+Y_ecoli_dpp <- data.frame(Y_ecoli_dpp,ecoli_clus[7])
+
+model_ecoli_dpp <- multinom(V9~X1+X2, data = Y_ecoli_dpp)
+
+p_ecoli_dpp <- predict(model_ecoli_dpp, Y_ecoli_dpp)
+tab_ecoli_dpp <- table(p_ecoli_dpp, Y_ecoli_dpp$V9)
+tab_ecoli_dpp
+
+ecoli_dpp_mis_error <- 1 - sum(diag(tab_ecoli_dpp)) / sum(tab_ecoli_dpp) # misslassication error / percent
+ecoli_dpp_mis_error
+```
+
